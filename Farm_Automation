@@ -1,0 +1,1470 @@
+#!/usr/bin/env python3
+# Farm_Automation by trust_me • fixed-v45 • 2025-08-28
+# – полная поддержка новых иконок
+# – исправлены все ошибки порядка загрузки
+# – улучшена обработка ресурсов
+
+import json
+import os
+import sys
+import threading
+import logging
+import hashlib
+import time
+import re
+import tempfile
+import shutil
+from pathlib import Path
+import queue as q
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+import webbrowser
+from datetime import datetime
+
+# ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
+
+def resource_path(relative_path):
+    """Получает абсолютный путь к ресурсу, работает для dev и для PyInstaller"""
+    try:
+        # PyInstaller создает временную папку и хранит путь в _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
+
+# Определяем базовую директорию
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
+
+# Пути к иконкам разных размеров с использованием resource_path
+ICON_PATHS = {
+    '16': resource_path('spider16.ico'),
+    '32': resource_path('spider32.ico'), 
+    '48': resource_path('spider48.ico'),
+    '256': resource_path('spider256.ico'),
+    'default': resource_path('spider256.ico')
+}
+
+# Остальные настройки...
+ROOT = BASE_DIR / 'Farm_Automation'
+ROOT.mkdir(parents=True, exist_ok=True)
+MA_DIR = BASE_DIR / 'Farm_Automation' / 'maFile'
+MA_DIR.mkdir(parents=True, exist_ok=True)
+
+CFG_FILE = BASE_DIR / 'settings.json'
+LOG_FILE = BASE_DIR / 'log.txt'
+
+# Настройка логирования
+try:
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s: %(message)s',
+        encoding='utf-8'
+    )
+except:
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s: %(message)s'
+    )
+
+# Language system
+LANGUAGES = {
+    'ru': {
+        'app_title': 'Farm_Automation by trust_me',
+        'main_tab': 'Основная',
+        'log_tab': 'Логи',
+        'management_tab': 'Управление аккаунтами',
+        'mafile_folder': 'Папка с maFiles',
+        'asf_config': 'Папка для конфигов ASF',
+        'accounts_file': 'Файл accounts.txt',
+        'manual_input': 'Ручной ввод',
+        'login_label': 'Логин',
+        'password_label': 'Пароль',
+        'always_replace': 'Всегда заменять существующие файлы',
+        'generate_btn': 'Сгенерировать',
+        'clear_log': 'Очистить лог',
+        'open_log': 'Открыть лог-файл',
+        'events_log': 'Журнал событий',
+        'status_waiting': 'Ожидание…',
+        'status_processing': 'Обработка…',
+        'status_error': 'Ошибка',
+        'status_success': 'Готово',
+        'language': 'Язык',
+        'russian': 'Русский',
+        'english': 'Английский',
+        'theme': 'Тема',
+        'light_theme': 'Светлая',
+        'dark_theme': 'Тёмная',
+        'browse': 'Обзор',
+        'select_folder': 'Выберите папку',
+        'select_file': 'Выберите файл',
+        'replace_title': 'Подтверждение замены',
+        'replace_msg': 'Аккаунт {} уже существует. Заменить файлы?',
+        'completed_title': 'Завершено',
+        'error_title': 'Ошибка',
+        'no_mafile_folder': 'Папка с maFiles не существует',
+        'no_asf_folder': 'Папка для конфигов ASF не существует',
+        'no_accounts_file': 'Файл accounts.txt не найден',
+        'no_login_password': 'Введите логин и пароль',
+        'no_accounts': 'Не найдено аккаунтов для обработки',
+        'no_matches': 'Не найдено совпадений логин/SteamID',
+        'processing_start': 'Запуск процесса генерации...',
+        'reading_accounts': 'Чтение accounts.txt: {}',
+        'using_manual': 'Используются ручные учетные данные',
+        'found_accounts': 'Найдено аккаунтов: {}',
+        'searching_mafiles': 'Поиск соответствующих maFiles...',
+        'found_matches': 'Найдено совпадений: {}',
+        'log_cleared': 'Лог очищен',
+        'log_not_found': 'Лог-файл не найден',
+        'log_open_error': 'Ошибка открытия лог-файла: {}',
+        'folder_selected': 'Выбрана папка: {}',
+        'file_selected': 'Выбран файл: {}',
+        'process_running': 'Процесс уже запущен',
+        'invalid_line': 'Пропущена некорректная строка {}: {}',
+        'invalid_lines': 'Пропущено некорректных строк: {}',
+        'mafile_read_error': 'Не удалось прочитать maFile: {}',
+        'steamid_used': 'SteamID {} уже используется, проверяем необходимость замены: {}',
+        'mafile_changed': 'maFile изменен: {}',
+        'password_changed': 'Пароль изменен: {}',
+        'config_read_error': 'Ошибка чтения конфига: {}.json',
+        'skipping_existing': 'Пропускаем существующий: {}',
+        'updated': 'Обновлен: {}',
+        'created': 'Создан: {}',
+        'config_error': 'Ошибка создания конфига для {}: {}',
+        'completed_msg': 'Готово! Добавлено: {}, Обновлено: {}, Пропущено: {}, Ошибок: {}',
+        'tg_button': 'tg - trust_me',
+        'account_management': 'Управление аккаунтами',
+        'account_name': 'Имя аккаунта',
+        'status': 'Статус',
+        'actions': 'Действия',
+        'delete_account': 'Удалить аккаунт',
+        'delete_confirm': 'Подтверждение удаления',
+        'delete_confirm_msg': 'Вы уверены, что хотите удалить аккаунт {}? Будут удалены конфиг и maFile.',
+        'account_deleted': 'Аккаунт {} удален',
+        'refresh': 'Обновить',
+        'account_valid': '✅ Активен',
+        'account_invalid': '❌ Ошибка',
+        'account_not_found': '⚠️ Файлы не найдены',
+        'open_config': 'Открыть конфиг',
+        'open_mafile': 'Открыть maFile',
+        'processing_account': 'Обработка аккаунта: {}',
+        'special_chars_warning': 'Обнаружены специальные символы в пароле, убедитесь в правильности экранирования'
+    },
+    'en': {
+        'app_title': 'Farm_Automation by trust_me',
+        'main_tab': 'Main',
+        'log_tab': 'Logs',
+        'management_tab': 'Account Management',
+        'mafile_folder': 'maFiles Folder',
+        'asf_config': 'ASF Config Folder',
+        'accounts_file': 'accounts.txt File',
+        'manual_input': 'Manual Input',
+        'login_label': 'Login',
+        'password_label': 'Password',
+        'always_replace': 'Always replace existing files',
+        'generate_btn': 'Generate',
+        'clear_log': 'Clear Log',
+        'open_log': 'Open Log File',
+        'events_log': 'Events Log',
+        'status_waiting': 'Waiting…',
+        'status_processing': 'Processing…',
+        'status_error': 'Error',
+        'status_success': 'Completed',
+        'language': 'Language',
+        'russian': 'Russian',
+        'english': 'English',
+        'theme': 'Theme',
+        'light_theme': 'Light',
+        'dark_theme': 'Dark',
+        'browse': 'Browse',
+        'select_folder': 'Select Folder',
+        'select_file': 'Select File',
+        'replace_title': 'Replace Confirmation',
+        'replace_msg': 'Account {} already exists. Replace files?',
+        'completed_title': 'Completed',
+        'error_title': 'Error',
+        'no_mafile_folder': 'maFiles folder does not exist',
+        'no_asf_folder': 'ASF config folder does not exist',
+        'no_accounts_file': 'accounts.txt file not found',
+        'no_login_password': 'Enter login and password',
+        'no_accounts': 'No accounts found for processing',
+        'no_matches': 'No login/SteamID matches found',
+        'processing_start': 'Starting generation process...',
+        'reading_accounts': 'Reading accounts.txt: {}',
+        'using_manual': 'Using manual credentials',
+        'found_accounts': 'Accounts found: {}',
+        'searching_mafiles': 'Searching for matching maFiles...',
+        'found_matches': 'Matches found: {}',
+        'log_cleared': 'Log cleared',
+        'log_not_found': 'Log file not found',
+        'log_open_error': 'Error opening log file: {}',
+        'folder_selected': 'Folder selected: {}',
+        'file_selected': 'File selected: {}',
+        'process_running': 'Process already running',
+        'invalid_line': 'Skipped invalid line {}: {}',
+        'invalid_lines': 'Invalid lines skipped: {}',
+        'mafile_read_error': 'Failed to read maFile: {}',
+        'steamid_used': 'SteamID {} already in use, checking if replacement needed: {}',
+        'mafile_changed': 'maFile changed: {}',
+        'password_changed': 'Password changed: {}',
+        'config_read_error': 'Error reading config: {}.json',
+        'skipping_existing': 'Skipping existing: {}',
+        'updated': 'Updated: {}',
+        'created': 'Created: {}',
+        'config_error': 'Error creating config for {}: {}',
+        'completed_msg': 'Completed! Added: {}, Updated: {}, Skipped: {}, Errors: {}',
+        'tg_button': 'tg - trust_me',
+        'account_management': 'Account Management',
+        'account_name': 'Account Name',
+        'status': 'Status',
+        'actions': 'Actions',
+        'delete_account': 'Delete Account',
+        'delete_confirm': 'Delete Confirmation',
+        'delete_confirm_msg': 'Are you sure you want to delete account {}? Config and maFile will be deleted.',
+        'account_deleted': 'Account {} deleted',
+        'refresh': 'Refresh',
+        'account_valid': '✅ Active',
+        'account_invalid': '❌ Error',
+        'account_not_found': '⚠️ Files not found',
+        'open_config': 'Open Config',
+        'open_mafile': 'Open maFile',
+        'processing_account': 'Processing account: {}',
+        'special_chars_warning': 'Special characters detected in password, ensure proper escaping'
+    }
+}
+
+# Theme colors
+THEMES = {
+    'light': {
+        'bg': '#f0f0f0',
+        'fg': '#000000',
+        'frame_bg': '#ffffff',
+        'entry_bg': '#ffffff',
+        'entry_fg': '#000000',
+        'button_bg': '#e0e0e0',
+        'button_fg': '#000000',
+        'button_active_bg': '#d0d0d0',
+        'button_pressed_bg': '#c0c0c0',
+        'text_bg': '#ffffff',
+        'text_fg': '#000000',
+        'tree_bg': '#ffffff',
+        'tree_fg': '#000000',
+        'tree_heading_bg': '#e0e0e0',
+        'tree_heading_fg': '#000000',
+        'tree_selected_bg': '#0078d7',
+        'tree_selected_fg': '#ffffff',
+        'tree_row_even': '#f8f8f8',
+        'tree_row_odd': '#ffffff',
+        'status_ok': '#ccffcc',
+        'status_error': '#ffcccc',
+        'status_warning': '#ffffcc'
+    },
+    'dark': {
+        'bg': '#1e1e1e',
+        'fg': '#e0e0e0',
+        'frame_bg': '#2c2c2c',
+        'entry_bg': '#2c2c2c',
+        'entry_fg': '#e0e0e0',
+        'button_bg': '#3c3c3c',
+        'button_fg': '#e0e0e0',
+        'button_active_bg': '#505050',
+        'button_pressed_bg': '#606060',
+        'text_bg': '#2c2c2c',
+        'text_fg': '#e0e0e0',
+        'tree_bg': '#2c2c2c',
+        'tree_fg': '#e0e0e0',
+        'tree_heading_bg': '#3c3c3c',
+        'tree_heading_fg': '#e0e0e0',
+        'tree_selected_bg': '#0078d7',
+        'tree_selected_fg': '#ffffff',
+        'tree_row_even': '#2a2a2a',
+        'tree_row_odd': '#252525',
+        'status_ok': '#2c4c2c',
+        'status_error': '#4c2c2c',
+        'status_warning': '#4c4c2c'
+    }
+}
+
+def safe_json_loads(text, default=None):
+    """Безопасная загрузка JSON с обработкой ошибок"""
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+def safe_file_read(path, encoding='utf-8', default=''):
+    """Безопасное чтение файла с обработкой ошибок"""
+    try:
+        with open(path, 'r', encoding=encoding) as f:
+            return f.read()
+    except Exception as e:
+        logging.error(f"Error reading file {path}: {e}")
+        return default
+
+def safe_file_write(path, content, encoding='utf-8'):
+    """Безопасная запись в файл с обработкой ошибок"""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding=encoding) as f:
+            f.write(content)
+        return True
+    except Exception as e:
+        logging.error(f"Error writing file {path}: {e}")
+        return False
+
+def load_cfg():
+    """Загрузка конфигурации с обработкой ошибок"""
+    if CFG_FILE.exists():
+        try:
+            content = safe_file_read(CFG_FILE)
+            if content:
+                return safe_json_loads(content, {})
+        except Exception as e:
+            logging.error(f'Error loading config: {e}')
+    
+    # Установка значений по умолчанию
+    return {
+        'use_txt': True,
+        'txt_file': '',
+        'ma_dir': '',
+        'out_dir': '',
+        'login': '',
+        'password': '',
+        'always_replace': False,
+        'language': 'ru',
+        'theme': 'dark',
+        'generated_logins': {},
+        'used_steamids': []
+    }
+
+def save_cfg(data):
+    """Сохранение конфигурации с обработкой ошибок"""
+    try:
+        safe_file_write(CFG_FILE, json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        logging.error(f'save_cfg: {e}')
+
+def calculate_file_hash(file_path):
+    """Calculate MD5 hash of a file with error handling"""
+    hash_md5 = hashlib.md5()
+    try:
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+    except Exception as e:
+        logging.error(f"Error calculating hash for {file_path}: {e}")
+        return None
+
+def load_ma_data(ma_path):
+    """Загрузка данных из maFile с обработкой ошибок"""
+    try:
+        content = safe_file_read(ma_path)
+        if not content:
+            return None, None
+            
+        js = safe_json_loads(content)
+        if not js:
+            return None, None
+            
+        return js.get('Session', {}).get('SteamID'), js.get('account_name')
+    except Exception as e:
+        logging.error(f'Error loading maFile {ma_path}: {e}')
+        return None, None
+
+def get_used_steamids(out_dir, ma_dir):
+    """Get SteamIDs that are currently in use by existing config files"""
+    used_steamids = set()
+    
+    out_dir = Path(out_dir)
+    ma_dir = Path(ma_dir)
+    
+    if not out_dir.exists() or not ma_dir.exists():
+        return used_steamids
+    
+    # Check all config files in output directory
+    for config_file in out_dir.glob('*.json'):
+        try:
+            login = config_file.stem
+            ma_file = ma_dir / f'{login}.maFile'
+            
+            if ma_file.exists():
+                steamid, _ = load_ma_data(ma_file)
+                if steamid:
+                    used_steamids.add(str(steamid))
+        except Exception as e:
+            logging.error(f"Error processing config file {config_file}: {e}")
+    
+    return used_steamids
+
+def play_startup_sound():
+    """Play a soft cross-platform startup sound"""
+    try:
+        # Используем resource_path для получения пути к звуковому файлу
+        wav_path = resource_path('startup.wav')
+        
+        # Try to play external sound file if exists
+        if os.path.exists(wav_path):
+            try:
+                import winsound
+                winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                return
+            except:
+                pass
+                
+            try:
+                from playsound import playsound
+                playsound(wav_path, block=False)
+                return
+            except:
+                pass
+        
+        # Generate a simple beep as fallback
+        try:
+            import winsound
+            winsound.Beep(800, 200)
+            time.sleep(0.1)
+            winsound.Beep(1000, 300)
+        except:
+            # Cross-platform beep for other OS
+            print('\a')
+            time.sleep(0.2)
+            print('\a')
+    except Exception:
+        pass
+
+def sanitize_filename(name):
+    """Очистка имени файла от недопустимых символов"""
+    return re.sub(r'[\\/*?:"<>|]', "_", name)
+
+# ================== КЛАСС APP ==================
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        
+        # Load configuration
+        self.cfg = load_cfg()
+        self.current_language = self.cfg.get('language', 'ru')
+        self.current_theme = self.cfg.get('theme', 'dark')
+        self.lang = LANGUAGES[self.current_language]
+        self.theme = THEMES[self.current_theme]
+        
+        # Setup window
+        self.title(self.lang['app_title'])
+        self.geometry('1000x650')
+        self.minsize(900, 600)
+        self.configure(bg=self.theme['bg'])
+        
+        # Set application icons
+        self._set_app_icons()
+        
+        # Setup variables
+        self.ma_dir = tk.StringVar(value=self.cfg.get('ma_dir', ''))
+        self.out_dir = tk.StringVar(value=self.cfg.get('out_dir', ''))
+        self.login = tk.StringVar(value=self.cfg.get('login', ''))
+        self.password = tk.StringVar(value=self.cfg.get('password', ''))
+        self.use_txt = tk.BooleanVar(value=self.cfg.get('use_txt', True))
+        self.txt_file = tk.StringVar(value=self.cfg.get('txt_file', ''))
+        self.always_replace = tk.BooleanVar(value=self.cfg.get('always_replace', False))
+
+        # Queue for thread-safe GUI updates
+        self.gui_queue = q.Queue()
+        self.after(100, self.process_queue)
+        self._running = False
+        
+        # Build UI
+        self._setup_styles()
+        self.build_ui()
+        
+        # Set up event handlers
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.use_txt.trace_add('write', self.toggle_main)
+        self.toggle_main()
+        
+        # Play startup sound
+        play_startup_sound()
+        
+        # Add initial log message
+        self.log_message(self.lang['status_waiting'])
+
+    def _set_app_icons(self):
+        """Set application icons for different contexts"""
+        try:
+            # Основная иконка окна
+            if os.path.exists(ICON_PATHS['256']):
+                self.iconbitmap(ICON_PATHS['256'])
+                logging.info("Основная иконка установлена: spider256.ico")
+            elif os.path.exists(ICON_PATHS['default']):
+                self.iconbitmap(ICON_PATHS['default'])
+                logging.info("Иконка установлена: spider256.ico")
+            else:
+                logging.warning("Файлы иконок не найдены")
+            
+        except Exception as e:
+            logging.error(f"Ошибка установки иконок: {e}")
+
+    def _setup_styles(self):
+        """Configure modern styles for the application"""
+        style = ttk.Style(self)
+        style.theme_use('clam')
+        
+        # Configure colors based on theme
+        style.configure('.', background=self.theme['bg'], foreground=self.theme['fg'])
+        style.configure('TFrame', background=self.theme['frame_bg'])
+        style.configure('TLabel', background=self.theme['frame_bg'], foreground=self.theme['fg'])
+        style.configure('TButton', 
+                       background=self.theme['button_bg'], 
+                       foreground=self.theme['button_fg'])
+        style.configure('TRadiobutton', background=self.theme['frame_bg'], foreground=self.theme['fg'])
+        style.configure('TCheckbutton', background=self.theme['frame_bg'], foreground=self.theme['fg'])
+        style.configure('TNotebook', background=self.theme['frame_bg'])
+        style.configure('TNotebook.Tab', background=self.theme['button_bg'], foreground=self.theme['button_fg'])
+        style.configure('TEntry', fieldbackground=self.theme['entry_bg'], foreground=self.theme['entry_fg'])
+        style.configure('Horizontal.TProgressbar', background='#00bfff', troughcolor=self.theme['frame_bg'])
+        
+        # Treeview styles
+        style.configure('Treeview', 
+                       background=self.theme['tree_bg'],
+                       foreground=self.theme['tree_fg'],
+                       fieldbackground=self.theme['tree_bg'],
+                       rowheight=25)
+        style.configure('Treeview.Heading', 
+                       background=self.theme['tree_heading_bg'],
+                       foreground=self.theme['tree_heading_fg'],
+                       font=('Arial', 10, 'bold'))
+        
+        # Map styles for active states
+        if self.current_theme == 'dark':
+            style.map('TButton', 
+                     background=[('active', self.theme['button_active_bg']), 
+                                ('pressed', self.theme['button_pressed_bg'])],
+                     foreground=[('active', self.theme['button_fg']),
+                                ('pressed', self.theme['button_fg'])])
+        else:
+            style.map('TButton', 
+                     background=[('active', self.theme['button_active_bg']), 
+                                ('pressed', self.theme['button_pressed_bg'])],
+                     foreground=[('active', self.theme['button_fg']),
+                                ('pressed', self.theme['button_fg'])])
+        
+        # Map styles for notebook tabs
+        style.map('TNotebook.Tab', 
+                 background=[('selected', self.theme['fg'])],
+                 foreground=[('selected', self.theme['bg'])])
+        
+        # Map styles for treeview
+        style.map('Treeview',
+                 background=[('selected', self.theme['tree_selected_bg'])],
+                 foreground=[('selected', self.theme['tree_selected_fg'])])
+        
+    def apply_theme(self):
+        """Apply the current theme to all widgets"""
+        self.theme = THEMES[self.current_theme]
+        self.configure(bg=self.theme['bg'])
+        
+        # Reconfigure styles
+        self._setup_styles()
+        
+        # Apply theme to all child widgets
+        for widget in self.winfo_children():
+            self._apply_theme_to_widget(widget)
+            
+        # Update status label
+        self.status_lbl.config(bg=self.theme['status_ok'], fg=self.theme['fg'])
+        
+        # Update log text
+        self.log_text.config(bg=self.theme['text_bg'], fg=self.theme['text_fg'])
+        
+        # Refresh account list to apply theme
+        self.refresh_accounts()
+    
+    def _apply_theme_to_widget(self, widget):
+        """Recursively apply theme to a widget and its children"""
+        widget_type = widget.winfo_class()
+        
+        try:
+            if widget_type == 'Text' or widget_type == 'ScrolledText':
+                widget.config(bg=self.theme['text_bg'], fg=self.theme['text_fg'])
+            elif widget_type == 'Listbox':
+                widget.config(bg=self.theme['entry_bg'], fg=self.theme['entry_fg'])
+            elif widget_type == 'Label':
+                widget.config(bg=self.theme['frame_bg'], fg=self.theme['fg'])
+            elif widget_type == 'Button':
+                widget.config(bg=self.theme['button_bg'], fg=self.theme['button_fg'],
+                            activebackground=self.theme['button_active_bg'],
+                            activeforeground=self.theme['button_fg'])
+        except Exception as e:
+            logging.error(f"Error applying theme to widget: {e}")
+        
+        # Apply to children
+        for child in widget.winfo_children():
+            self._apply_theme_to_widget(child)
+
+    def process_queue(self):
+        try:
+            while True:
+                func = self.gui_queue.get_nowait()
+                func()
+        except q.Empty:
+            pass
+        finally:
+            self.after(100, self.process_queue)
+
+    def on_close(self):
+        self.cfg.update({
+            'ma_dir': self.ma_dir.get(),
+            'out_dir': self.out_dir.get(),
+            'login': self.login.get(),
+            'password': self.password.get(),
+            'use_txt': self.use_txt.get(),
+            'txt_file': self.txt_file.get(),
+            'always_replace': self.always_replace.get(),
+            'language': self.current_language,
+            'theme': self.current_theme
+        })
+        save_cfg(self.cfg)
+        self.destroy()
+
+    def build_ui(self):
+        # Create main paned window
+        main_paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Left frame for controls
+        left_frame = ttk.Frame(main_paned, width=500)
+        main_paned.add(left_frame, weight=1)
+        
+        # Right frame for logs
+        right_frame = ttk.Frame(main_paned, width=400)
+        main_paned.add(right_frame, weight=1)
+        
+        # Build controls in left frame
+        self.build_controls(left_frame)
+        
+        # Build log panel in right frame
+        self.build_log_panel(right_frame)
+        
+        # Add language and theme selectors
+        self.build_settings_panel()
+
+    def build_settings_panel(self):
+        """Add language and theme selection to the UI"""
+        settings_frame = ttk.Frame(self)
+        settings_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+        
+        # Language selection
+        ttk.Label(settings_frame, text=f"{self.lang['language']}:").pack(side=tk.LEFT, padx=5)
+        
+        self.lang_var = tk.StringVar(value=self.current_language)
+        
+        def change_language(*args):
+            self.current_language = self.lang_var.get()
+            self.lang = LANGUAGES[self.current_language]
+            self.update_ui_text()
+        
+        self.lang_var.trace('w', change_language)
+        
+        ttk.Radiobutton(settings_frame, text=self.lang['russian'], 
+                       variable=self.lang_var, value='ru').pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(settings_frame, text=self.lang['english'], 
+                       variable=self.lang_var, value='en').pack(side=tk.LEFT, padx=5)
+        
+        # Theme selection
+        ttk.Label(settings_frame, text=f"{self.lang['theme']}:").pack(side=tk.LEFT, padx=(20, 5))
+        
+        self.theme_var = tk.StringVar(value=self.current_theme)
+        
+        def change_theme(*args):
+            self.current_theme = self.theme_var.get()
+            self.apply_theme()
+        
+        self.theme_var.trace('w', change_theme)
+        
+        ttk.Radiobutton(settings_frame, text=self.lang['light_theme'], 
+                       variable=self.theme_var, value='light').pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(settings_frame, text=self.lang['dark_theme'], 
+                       variable=self.theme_var, value='dark').pack(side=tk.LEFT, padx=5)
+
+    def update_ui_text(self):
+        """Update all UI text elements based on current language"""
+        self.title(self.lang['app_title'])
+        
+        # Update notebook tabs
+        self.nb.tab(0, text=self.lang['main_tab'])
+        self.nb.tab(1, text=self.lang['management_tab'])
+        
+        # Update labels and buttons
+        self.ma_label.config(text=self.lang['mafile_folder'])
+        self.out_label.config(text=self.lang['asf_config'])
+        self.txt_label.config(text=self.lang['accounts_file'])
+        self.manual_rb.config(text=self.lang['manual_input'])
+        self.login_label.config(text=self.lang['login_label'])
+        self.password_label.config(text=self.lang['password_label'])
+        self.replace_cb.config(text=self.lang['always_replace'])
+        self.generate_btn.config(text=self.lang['generate_btn'])
+        self.clear_btn.config(text=self.lang['clear_log'])
+        self.open_btn.config(text=self.lang['open_log'])
+        self.log_title.config(text=self.lang['events_log'])
+        self.tg_btn.config(text=self.lang['tg_button'])
+        self.refresh_btn.config(text=self.lang['refresh'])
+        self.management_title.config(text=self.lang['account_management'])
+        
+        # Update treeview columns
+        self.tree.heading('account', text=self.lang['account_name'])
+        self.tree.heading('status', text=self.lang['status'])
+        self.tree.heading('actions', text=self.lang['actions'])
+        
+        # Update status if not processing
+        if not self._running:
+            self.status_lbl.config(text=self.lang['status_waiting'])
+
+    def build_controls(self, parent):
+        # Create notebook for tabs
+        self.nb = ttk.Notebook(parent)
+        self.nb.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Main tab
+        main = ttk.Frame(self.nb)
+        self.nb.add(main, text=self.lang['main_tab'])
+
+        # maFile folder
+        self.ma_label = ttk.Label(main, text=self.lang['mafile_folder'])
+        self.ma_label.grid(row=0, column=0, sticky='w', pady=5)
+        
+        ma_frame = ttk.Frame(main)
+        ma_frame.grid(row=0, column=1, padx=4, sticky='ew', columnspan=2)
+        ma_frame.columnconfigure(0, weight=1)
+        
+        self.ma_ent = ttk.Entry(ma_frame, textvariable=self.ma_dir, width=30)
+        self.ma_ent.grid(row=0, column=0, sticky='ew', padx=(0, 5))
+        
+        ttk.Button(ma_frame, text=self.lang['browse'], 
+                  command=lambda: self.browse_dir(self.ma_dir)).grid(row=0, column=1)
+
+        # ASF config folder
+        self.out_label = ttk.Label(main, text=self.lang['asf_config'])
+        self.out_label.grid(row=1, column=0, sticky='w', pady=5)
+        
+        out_frame = ttk.Frame(main)
+        out_frame.grid(row=1, column=1, padx=4, sticky='ew', columnspan=2)
+        out_frame.columnconfigure(0, weight=1)
+        
+        self.out_ent = ttk.Entry(out_frame, textvariable=self.out_dir, width=30)
+        self.out_ent.grid(row=0, column=0, sticky='ew', padx=(0, 5))
+        
+        ttk.Button(out_frame, text=self.lang['browse'], 
+                  command=lambda: self.browse_dir(self.out_dir)).grid(row=0, column=1)
+
+        # Input type selection
+        input_frame = ttk.Frame(main)
+        input_frame.grid(row=2, column=0, columnspan=3, pady=8, sticky='w')
+        
+        self.txt_rb = ttk.Radiobutton(input_frame, text="accounts.txt", 
+                                     variable=self.use_txt, value=True)
+        self.txt_rb.pack(side=tk.LEFT, padx=6)
+        
+        self.manual_rb = ttk.Radiobutton(input_frame, text=self.lang['manual_input'], 
+                                        variable=self.use_txt, value=False)
+        self.manual_rb.pack(side=tk.LEFT, padx=6)
+
+        # accounts.txt controls
+        self.txt_label = ttk.Label(main, text=self.lang['accounts_file'])
+        self.txt_label.grid(row=3, column=0, sticky='w', pady=5)
+        
+        txt_frame = ttk.Frame(main)
+        txt_frame.grid(row=3, column=1, padx=4, sticky='ew', columnspan=2)
+        txt_frame.columnconfigure(0, weight=1)
+        
+        self.txt_ent = ttk.Entry(txt_frame, textvariable=self.txt_file, width=30)
+        self.txt_ent.grid(row=0, column=0, sticky='ew', padx=(0, 5))
+        
+        self.txt_btn = ttk.Button(txt_frame, text=self.lang['browse'], 
+                                 command=lambda: self.browse_file(self.txt_file))
+        self.txt_btn.grid(row=0, column=1)
+
+        # Manual input controls
+        self.man_frm = ttk.Frame(main)
+        
+        self.login_label = ttk.Label(self.man_frm, text=self.lang['login_label'])
+        self.login_label.grid(row=0, column=0, sticky='e', padx=4)
+        
+        self.log_ent = ttk.Entry(self.man_frm, textvariable=self.login, width=15)
+        self.log_ent.grid(row=0, column=1, padx=4)
+        
+        self.password_label = ttk.Label(self.man_frm, text=self.lang['password_label'])
+        self.password_label.grid(row=0, column=2, sticky='e', padx=4)
+        
+        self.pwd_ent = ttk.Entry(self.man_frm, textvariable=self.password, width=15, show='•')
+        self.pwd_ent.grid(row=0, column=3, padx=4)
+
+        # Always replace checkbox
+        self.replace_cb = ttk.Checkbutton(main, text=self.lang['always_replace'], 
+                                         variable=self.always_replace)
+        self.replace_cb.grid(row=5, column=0, columnspan=3, pady=10, sticky='w')
+
+        # Generate button
+        btn_frame = ttk.Frame(main)
+        btn_frame.grid(row=6, column=0, columnspan=3, pady=15)
+        
+        self.generate_btn = ttk.Button(btn_frame, text=self.lang['generate_btn'], 
+                                      command=self.start_generation)
+        self.generate_btn.pack()
+        
+        # Build account management tab
+        self.build_management_tab()
+        
+        # Status label
+        self.status_lbl = tk.Label(parent, text=self.lang['status_waiting'], 
+                                  bg=self.theme['status_ok'], fg=self.theme['fg'],
+                                  font=('Arial', 9), anchor='w')
+        self.status_lbl.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=2)
+        
+        # Progress bar
+        self.progress = ttk.Progressbar(parent, orient=tk.HORIZONTAL, 
+                                       mode='determinate', maximum=100,
+                                       style='Horizontal.TProgressbar')
+        self.progress.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=2)
+        self.progress.pack_forget()
+        
+        # Telegram link
+        self.tg_btn = tk.Label(parent, text=self.lang['tg_button'], bg=self.theme['bg'], 
+                              fg='#0000ff', font=('Arial', 9, 'underline'), 
+                              cursor='hand2')
+        self.tg_btn.pack(side=tk.RIGHT, padx=10, pady=5)
+        self.tg_btn.bind('<Button-1>', lambda e: webbrowser.open_new("https://t.me/trust_me_you"))
+        
+        # Configure column weights for responsive design
+        main.columnconfigure(1, weight=1)
+
+    def build_management_tab(self):
+        """Build the account management tab"""
+        management = ttk.Frame(self.nb)
+        self.nb.add(management, text=self.lang['management_tab'])
+        
+        # Management title
+        self.management_title = ttk.Label(management, text=self.lang['account_management'], 
+                                         font=('Arial', 12, 'bold'))
+        self.management_title.pack(pady=(5, 10))
+        
+        # Refresh button
+        btn_frame = ttk.Frame(management)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.refresh_btn = ttk.Button(btn_frame, text=self.lang['refresh'], 
+                                     command=self.refresh_accounts)
+        self.refresh_btn.pack(side=tk.RIGHT)
+        
+        # Treeview for accounts
+        tree_frame = ttk.Frame(management)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Create treeview with scrollbar
+        tree_scroll = ttk.Scrollbar(tree_frame)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set,
+                                columns=('account', 'status', 'actions'), 
+                                show='headings', height=15)
+        
+        # Define columns
+        self.tree.heading('account', text=self.lang['account_name'], anchor=tk.W)
+        self.tree.heading('status', text=self.lang['status'], anchor=tk.W)
+        self.tree.heading('actions', text=self.lang['actions'], anchor=tk.W)
+        
+        self.tree.column('account', width=200)
+        self.tree.column('status', width=150)
+        self.tree.column('actions', width=200)
+        
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        tree_scroll.config(command=self.tree.yview)
+        
+        # Bind double click to open config
+        self.tree.bind('<Double-1>', self.on_account_double_click)
+        
+        # Load accounts
+        self.refresh_accounts()
+
+    def build_log_panel(self, parent):
+        """Build the log panel in the right frame"""
+        # Log panel title
+        self.log_title = ttk.Label(parent, text=self.lang['events_log'], 
+                                  font=('Arial', 12, 'bold'))
+        self.log_title.pack(pady=(5, 10))
+        
+        # Log text area with scrollbar
+        log_frame = ttk.Frame(parent)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.log_text = scrolledtext.ScrolledText(
+            log_frame,
+            wrap=tk.WORD,
+            width=40,
+            height=20,
+            bg=self.theme['text_bg'],
+            fg=self.theme['text_fg'],
+            font=('Courier', 9),
+            relief=tk.SUNKEN,
+            borderwidth=1
+        )
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.config(state=tk.DISABLED)
+        
+        # Log buttons frame
+        log_buttons = ttk.Frame(parent)
+        log_buttons.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.clear_btn = ttk.Button(log_buttons, text=self.lang['clear_log'], 
+                                   command=self.clear_log)
+        self.clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.open_btn = ttk.Button(log_buttons, text=self.lang['open_log'], 
+                                  command=self.open_log_file)
+        self.open_btn.pack(side=tk.RIGHT, padx=5)
+
+    def refresh_accounts(self):
+        """Refresh the list of accounts - только созданные программой"""
+        # Clear existing items
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Get config directory
+        config_dir = Path(self.out_dir.get())
+        if not config_dir.exists():
+            return
+        
+        # Get list of accounts created by this program
+        generated_logins = self.cfg.get('generated_logins', {})
+        
+        # Scan for config files
+        for config_file in config_dir.glob('*.json'):
+            try:
+                account_name = config_file.stem
+                
+                # Пропускаем аккаунты, не созданные этой программой
+                if account_name not in generated_logins:
+                    continue
+                    
+                ma_file = MA_DIR / f'{account_name}.maFile'
+                
+                # Determine status
+                if not ma_file.exists():
+                    status = self.lang['account_not_found']
+                    status_color = 'error'
+                else:
+                    # Try to read config to check if it's valid
+                    try:
+                        with open(config_file, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+                        status = self.lang['account_valid']
+                        status_color = 'ok'
+                    except:
+                        status = self.lang['account_invalid']
+                        status_color = 'error'
+                
+                # Add to treeview with alternating row colors
+                item_id = self.tree.insert('', 'end', values=(
+                    account_name, 
+                    status,
+                    self.lang['delete_account']
+                ))
+                
+                # Apply alternating row colors
+                if len(self.tree.get_children()) % 2 == 0:
+                    self.tree.set(item_id, column='#0', value='even')
+                else:
+                    self.tree.set(item_id, column='#0', value='odd')
+                
+                # Color code based on status
+                if status_color == 'error':
+                    self.tree.set(item_id, 'status', status)
+                
+            except Exception as e:
+                logging.error(f"Error processing account {config_file}: {e}")
+
+    def on_account_double_click(self, event):
+        """Handle double click on account row"""
+        try:
+            item = self.tree.selection()[0]
+            account_name = self.tree.item(item, 'values')[0]
+            column = self.tree.identify_column(event.x)
+            
+            if column == '#1':  # Account name column - open config
+                self.open_config_file(account_name)
+            elif column == '#2':  # Status column - open maFile
+                self.open_mafile(account_name)
+            elif column == '#3':  # Actions column - delete account
+                self.delete_account(account_name)
+        except IndexError:
+            # No item selected
+            pass
+
+    def open_config_file(self, account_name):
+        """Open config file in default editor"""
+        try:
+            config_file = Path(self.out_dir.get()) / f'{account_name}.json'
+            if config_file.exists():
+                if sys.platform == 'win32':
+                    os.startfile(str(config_file))
+                elif sys.platform == 'darwin':  # macOS
+                    os.system(f'open "{config_file}"')
+                else:  # Linux
+                    os.system(f'xdg-open "{config_file}"')
+        except Exception as e:
+            self.log_message(f"Error opening config: {e}")
+
+    def open_mafile(self, account_name):
+        """Open maFile in default editor"""
+        try:
+            ma_file = MA_DIR / f'{account_name}.maFile'
+            if ma_file.exists():
+                if sys.platform == 'win32':
+                    os.startfile(str(ma_file))
+                elif sys.platform == 'darwin':  # macOS
+                    os.system(f'open "{ma_file}"')
+                else:  # Linux
+                    os.system(f'xdg-open "{ma_file}"')
+        except Exception as e:
+            self.log_message(f"Error opening maFile: {e}")
+
+    def delete_account(self, account_name):
+        """Delete an account (config and maFile)"""
+        # Confirm deletion
+        if not messagebox.askyesno(
+            self.lang['delete_confirm'],
+            self.lang['delete_confirm_msg'].format(account_name)
+        ):
+            return
+        
+        # Delete config file
+        config_file = Path(self.out_dir.get()) / f'{account_name}.json'
+        if config_file.exists():
+            try:
+                config_file.unlink()
+            except Exception as e:
+                self.log_message(f"Error deleting config: {e}")
+        
+        # Delete maFile
+        ma_file = MA_DIR / f'{account_name}.maFile'
+        if ma_file.exists():
+            try:
+                ma_file.unlink()
+            except Exception as e:
+                self.log_message(f"Error deleting maFile: {e}")
+        
+        # Remove from generated_logins and used_steamids
+        if account_name in self.cfg.get('generated_logins', {}):
+            # Get steamid before removing
+            steamid = self.cfg['generated_logins'][account_name].get('steamid')
+            # Remove from generated_logins
+            del self.cfg['generated_logins'][account_name]
+            # Remove from used_steamids if present
+            if steamid and steamid in self.cfg.get('used_steamids', []):
+                self.cfg['used_steamids'].remove(steamid)
+            
+            # Save updated config
+            save_cfg(self.cfg)
+        
+        # Refresh account list
+        self.refresh_accounts()
+        
+        # Log action
+        self.log_message(self.lang['account_deleted'].format(account_name))
+
+    def log_message(self, message):
+        """Add a message to the log panel"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        # Экранируем специальные символы для безопасного логирования
+        safe_message = str(message).replace('%', '%%')
+        formatted_message = f"[{timestamp}] {safe_message}\n"
+        
+        self.gui_queue.put(lambda: self._add_log_message(formatted_message))
+        logging.info(safe_message)
+
+    def _add_log_message(self, message):
+        """Thread-safe method to add message to log"""
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, message)
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+
+    def clear_log(self):
+        """Clear the log panel"""
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.DISABLED)
+        self.log_message(self.lang['log_cleared'])
+
+    def open_log_file(self):
+        """Open the log file in default editor"""
+        try:
+            if LOG_FILE.exists():
+                if sys.platform == 'win32':
+                    os.startfile(str(LOG_FILE))
+                elif sys.platform == 'darwin':  # macOS
+                    os.system(f'open "{LOG_FILE}"')
+                else:  # Linux
+                    os.system(f'xdg-open "{LOG_FILE}"')
+            else:
+                self.log_message(self.lang['log_not_found'])
+        except Exception as e:
+            self.log_message(self.lang['log_open_error'].format(e))
+
+    def toggle_main(self, *_):
+        if self.use_txt.get():
+            self.txt_label.grid()
+            self.txt_ent.grid()
+            self.txt_btn.grid()
+            self.man_frm.grid_remove()
+        else:
+            self.txt_label.grid_remove()
+            self.txt_ent.grid_remove()
+            self.txt_btn.grid_remove()
+            self.man_frm.grid(row=4, column=0, columnspan=3, pady=10, sticky='w')
+
+    def browse_dir(self, var):
+        path = filedialog.askdirectory(title=self.lang['select_folder'])
+        if path:
+            var.set(path)
+            self.log_message(self.lang['folder_selected'].format(path))
+            # Refresh accounts if it's the config directory
+            if var == self.out_dir:
+                self.refresh_accounts()
+
+    def browse_file(self, var):
+        path = filedialog.askopenfilename(
+            title=self.lang['select_file'],
+            filetypes=[('Text files', '*.txt'), ('All files', '*.*')]
+        )
+        if path:
+            var.set(path)
+            self.log_message(self.lang['file_selected'].format(path))
+
+    def start_generation(self):
+        if getattr(self, '_running', False):
+            self.log_message(self.lang['process_running'])
+            return
+            
+        self._running = True
+        self.log_message(self.lang['processing_start'])
+        threading.Thread(target=self.run_generation, daemon=True).start()
+
+    def run_generation(self):
+        # Show progress bar
+        self.gui_queue.put(lambda: self.progress.pack(fill=tk.X, padx=10, pady=2))
+        self.gui_queue.put(lambda: self.status_lbl.config(
+            text=self.lang['status_processing'], bg=self.theme['status_warning']))
+        self.gui_queue.put(lambda: self.progress.configure(value=0))
+
+        # Validate paths
+        ma_in = Path(self.ma_dir.get())
+        out_dir = Path(self.out_dir.get())
+        
+        if not ma_in.is_dir():
+            self.log_message(self.lang['no_mafile_folder'])
+            self.gui_queue.put(lambda: self.status_lbl.config(
+                text=self.lang['status_error'], bg=self.theme['status_error']))
+            self.gui_queue.put(lambda: self.progress.pack_forget())
+            self._running = False
+            return
+            
+        if not out_dir.is_dir():
+            self.log_message(self.lang['no_asf_folder'])
+            self.gui_queue.put(lambda: self.status_lbl.config(
+                text=self.lang['status_error'], bg=self.theme['status_error']))
+            self.gui_queue.put(lambda: self.progress.pack_forget())
+            self._running = False
+            return
+
+        # Get currently used SteamIDs from existing files
+        used_steamids = get_used_steamids(out_dir, MA_DIR)
+        self.log_message(f"Found used SteamIDs: {len(used_steamids)}")
+
+        # Load accounts
+        accounts = []
+        bad_lines = 0
+        
+        if self.use_txt.get():
+            txt = Path(self.txt_file.get())
+            if not txt.is_file():
+                self.log_message(self.lang['no_accounts_file'])
+                self.gui_queue.put(lambda: self.status_lbl.config(
+                    text=self.lang['status_error'], bg=self.theme['status_error']))
+                self.gui_queue.put(lambda: self.progress.pack_forget())
+                self._running = False
+                return
+                
+            self.log_message(self.lang['reading_accounts'].format(txt))
+            try:
+                content = safe_file_read(txt)
+                for i, ln in enumerate(content.splitlines(), 1):
+                    try:
+                        ln = ln.strip()
+                        if not ln or ln.startswith('#'):  # Skip empty lines and comments
+                            continue
+                            
+                        if ':' not in ln:
+                            self.log_message(self.lang['invalid_line'].format(i, ln))
+                            bad_lines += 1
+                            continue
+                            
+                        parts = ln.split(':', 1)  # Split only on first colon
+                        login, pwd = parts[0].strip(), parts[1].strip()
+                        
+                        if not login or not pwd:
+                            self.log_message(self.lang['invalid_line'].format(i, ln))
+                            bad_lines += 1
+                            continue
+                            
+                        # Check for special characters in password
+                        if any(c in pwd for c in '%\\'):
+                            self.log_message(self.lang['special_chars_warning'])
+                            
+                        accounts.append((login, pwd))
+                        self.log_message(f"Found account: {login}")
+                    except Exception as e:
+                        self.log_message(f"Error processing line {i}: {e}")
+                        bad_lines += 1
+            except Exception as e:
+                self.log_message(f"Error reading accounts file: {e}")
+                self.gui_queue.put(lambda: self.status_lbl.config(
+                    text=self.lang['status_error'], bg=self.theme['status_error']))
+                self.gui_queue.put(lambda: self.progress.pack_forget())
+                self._running = False
+                return
+                
+            if bad_lines:
+                self.log_message(self.lang['invalid_lines'].format(bad_lines))
+        else:
+            login = self.login.get().strip()
+            pwd = self.password.get().strip()
+            
+            if not login or not pwd:
+                self.log_message(self.lang['no_login_password'])
+                self.gui_queue.put(lambda: self.status_lbl.config(
+                    text=self.lang['status_error'], bg=self.theme['status_error']))
+                self.gui_queue.put(lambda: self.progress.pack_forget())
+                self._running = False
+                return
+                
+            # Check for special characters in password
+            if any(c in pwd for c in '%\\'):
+                self.log_message(self.lang['special_chars_warning'])
+                
+            accounts = [(login, pwd)]
+            self.log_message(self.lang['using_manual'])
+
+        if not accounts:
+            self.log_message(self.lang['no_accounts'])
+            self.gui_queue.put(lambda: self.status_lbl.config(
+                text=self.lang['status_error'], bg=self.theme['status_error']))
+            self.gui_queue.put(lambda: self.progress.pack_forget())
+            self._running = False
+            return
+            
+        self.log_message(self.lang['found_accounts'].format(len(accounts)))
+
+        # Find matching maFiles
+        pairs = []
+        
+        self.log_message(self.lang['searching_mafiles'])
+        
+        for mafile in sorted(ma_in.glob('*.maFile')):
+            sid, ma_login = load_ma_data(mafile)
+            if sid is None or ma_login is None:
+                self.log_message(self.lang['mafile_read_error'].format(mafile.name))
+                continue
+                
+            for login, pwd in accounts:
+                if ma_login == login:
+                    if str(sid) in used_steamids:
+                        self.log_message(self.lang['steamid_used'].format(sid, login))
+                        # Check if we should replace existing files
+                        cfg_path = out_dir / f'{login}.json'
+                        ma_path = MA_DIR / f'{login}.maFile'
+                        
+                        if cfg_path.exists() and ma_path.exists():
+                            # Files exist, check if we should replace them
+                            need_replace = self.always_replace.get()
+                            
+                            if not need_replace:
+                                # Use queue to show dialog in main thread
+                                result = []
+                                self.gui_queue.put(lambda: result.append(
+                                    messagebox.askyesno(
+                                        self.lang['replace_title'],
+                                        self.lang['replace_msg'].format(login)
+                                    )
+                                ))
+                                
+                                # Wait for response
+                                while not result:
+                                    time.sleep(0.1)
+                                    
+                                need_replace = result[0]
+                            
+                            if need_replace:
+                                pairs.append((mafile, login, pwd, sid))
+                            else:
+                                self.log_message(self.lang['skipping_existing'].format(login))
+                        else:
+                            # Files don't exist, but SteamID is in use by another login
+                            self.log_message(f"SteamID {sid} используется другим аккаунтом, пропускаем: {login}")
+                    else:
+                        # SteamID is not in use, add to pairs
+                        pairs.append((mafile, login, pwd, sid))
+                    break
+
+        if not pairs:
+            self.log_message(self.lang['no_matches'])
+            self.gui_queue.put(lambda: self.status_lbl.config(
+                text=self.lang['status_error'], bg=self.theme['status_error']))
+            self.gui_queue.put(lambda: self.progress.pack_forget())
+            self._running = False
+            return
+            
+        self.log_message(self.lang['found_matches'].format(len(pairs)))
+
+        # Process each pair
+        done = 0
+        created = 0
+        skipped = 0
+        replaced = 0
+        errors = 0
+        
+        for mafile, login, pwd, sid in pairs:
+            self.log_message(self.lang['processing_account'].format(login))
+            
+            # Sanitize login for filename
+            safe_login = sanitize_filename(login)
+            cfg_path = out_dir / f'{safe_login}.json'
+            ma_path = MA_DIR / f'{safe_login}.maFile'
+            
+            # Calculate hash of source maFile
+            source_hash = calculate_file_hash(mafile)
+            if source_hash is None:
+                self.log_message(f"Ошибка чтения maFile: {mafile.name}")
+                errors += 1
+                continue
+                
+            # Check if config already exists
+            config_exists = cfg_path.exists()
+            ma_exists = ma_path.exists()
+            
+            # Check if we need to replace
+            need_replace = False
+            if config_exists and ma_exists:
+                # Check if maFile has changed
+                existing_hash = calculate_file_hash(ma_path)
+                if existing_hash != source_hash:
+                    self.log_message(self.lang['mafile_changed'].format(login))
+                    need_replace = True
+                
+                # Check if config has different password
+                try:
+                    existing_cfg_content = safe_file_read(cfg_path)
+                    existing_cfg = safe_json_loads(existing_cfg_content, {})
+                    if existing_cfg.get('SteamPassword') != pwd:
+                        self.log_message(self.lang['password_changed'].format(login))
+                        need_replace = True
+                except:
+                    self.log_message(self.lang['config_read_error'].format(login))
+                    need_replace = True
+                    
+            # Ask for replacement if needed (unless always_replace is set)
+            if config_exists and not self.always_replace.get() and need_replace:
+                # Use queue to show dialog in main thread
+                result = []
+                self.gui_queue.put(lambda: result.append(
+                    messagebox.askyesno(
+                        self.lang['replace_title'],
+                        self.lang['replace_msg'].format(login)
+                    )
+                ))
+                
+                # Wait for response
+                while not result:
+                    time.sleep(0.1)
+                    
+                need_replace = result[0]
+            
+            # Process based on conditions
+            if config_exists and not need_replace:
+                self.log_message(self.lang['skipping_existing'].format(login))
+                skipped += 1
+            else:
+                # Create or update config
+                cfg = {
+                    'Enabled': True,
+                    'SteamLogin': login,
+                    'SteamPassword': pwd,
+                    'GamesPlayedWhileIdle': [440, 570, 730]
+                }
+                
+                try:
+                    # Write config file
+                    cfg_json = json.dumps(cfg, indent=2, ensure_ascii=False)
+                    if not safe_file_write(cfg_path, cfg_json):
+                        raise Exception("Failed to write config file")
+                    
+                    # Copy maFile
+                    with open(mafile, 'rb') as src, open(ma_path, 'wb') as dst:
+                        dst.write(src.read())
+                    
+                    # Update tracking
+                    if login not in self.cfg.get('generated_logins', {}):
+                        # Add to used_steamids if it's a new account
+                        if sid and str(sid) not in self.cfg.get('used_steamids', []):
+                            self.cfg.setdefault('used_steamids', []).append(str(sid))
+                    
+                    # Update generated_logins
+                    self.cfg.setdefault('generated_logins', {})[login] = {
+                        'steamid': str(sid) if sid else None,
+                        'mafile_hash': source_hash,
+                        'updated': datetime.now().isoformat()
+                    }
+                    
+                    if config_exists:
+                        self.log_message(self.lang['updated'].format(login))
+                        replaced += 1
+                    else:
+                        self.log_message(self.lang['created'].format(login))
+                        created += 1
+                        
+                except Exception as e:
+                    self.log_message(self.lang['config_error'].format(login, e))
+                    errors += 1
+            
+            # Update progress
+            done += 1
+            progress = int(done / len(pairs) * 100)
+            self.gui_queue.put(lambda v=progress: self.progress.configure(value=v))
+
+        # Save configuration
+        save_cfg(self.cfg)
+
+        # Show results
+        self.gui_queue.put(lambda: self.progress.pack_forget())
+        
+        final_msg = self.lang['completed_msg'].format(created, replaced, skipped, errors)
+        self.log_message(final_msg)
+        
+        self.gui_queue.put(lambda: messagebox.showinfo(
+            self.lang['completed_title'], final_msg))
+        self.gui_queue.put(lambda: self.status_lbl.config(
+            text=self.lang['status_success'], bg=self.theme['status_ok']))
+        
+        # Refresh account list
+        self.refresh_accounts()
+        
+        self._running = False
+
+if __name__ == '__main__':
+    app = App()
+    app.mainloop()
+
